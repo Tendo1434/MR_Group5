@@ -1,0 +1,188 @@
+---
+title: "Determining the causal effect of kidney function on diastolic blood pressure using two sample mendelian randomization approach"
+author: " Irene, Olga, Victor, Dr.Allan and Chris"
+date: "3/23/2023"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## INTRODUCTION
+
+# Two sample Mendelian randomization using the TwoSampleMR package
+
+## Install and load required packages
+
+```{r}
+#install.packages("TwoSampleMR")
+library(dplyr)
+library(data.table)
+library(TwoSampleMR)
+library(ggplot2)
+library(plyr) 
+library(devtools)
+library(calibrate)
+library(ggrepel)
+library(ggthemes)
+library(MRInstruments)
+library(png)
+```
+
+## Set working directory
+``` {r}
+setwd("/home/irene/MR_UG")
+```
+
+### Load in Exposure Data
+```{r}
+rm(list = ls())
+mvpexp <- read.csv("signMVP_header.txt", h=T, sep = "\t")
+#mvpexp
+dbp_out <- read.table("DBP_greped2.txt",h=T,sep = " ")
+for_merge <- read.table("for_merge", h=T)
+```
+
+### merge exp n outcome data
+```{r, include=TRUE}
+merged <- merge(dbp_out,for_merge,by = "snpid")
+colnames(mvpexp) <- paste("EXP", colnames(mvpexp), sep = "_")
+colnames(dbp_out) <- paste("OUT", colnames(dbp_out), sep = "_")
+
+```
+
+
+```{r, include=TRUE}
+colnames(mvpexp)
+colnames(dbp_out)
+
+```
+### Format the Exposure data to comply with TSMR package
+```{r}
+expformated <- format_data(mvpexp, header = TRUE, type = "exposure", snp_col = "EXP_rs", beta_col = "EXP_EffectEstimate", se_col = "EXP_SE", effect_allele_col = "EXP_EA", other_allele_col = "EXP_Allele2", eaf_col = "EXP_EAF", pval_col = "EXP_Pvalue")
+```
+
+### Load the Outcome Data
+```{r}
+# alt_out <- read.table("alt_outcome.txt", h=T,quote="\"", comment.char="")
+```
+### View the structure of the outcome data using str and head
+
+```{r}
+# str(alt_out)
+# head(alt_out)
+colnames(merged)
+```
+
+### Format the Outcome data to comply with TSMR package
+```{r}
+outformated <- format_data(merged, header = TRUE, type = "outcome", snp_col = "rs", beta_col = "beta_uganda", se_col = "se_uganda", effect_allele_col = "allele1", other_allele_col = "allele2", eaf_col = "af_uganda", pval_col = "pval_uganda")
+```
+
+### Harmonize both exposure and outcome
+*Note: there are different harmonization fuction depending on what we want to do with palindromic SNPs. This shall be explained in details.*
+```{r}
+harmonized <- harmonise_data(exposure_dat = expformated, outcome_dat = outformated, action = 2)
+
+#write.table(harmonized, file = "harmonized.txt", row.names = FALSE, col.names = TRUE, quote = FALSE, sep = "\t")
+```
+```{r}
+# palindromic_at<-subset(harmonized,effect_allele.exposure %in% "A"&other_allele.exposure %in% "T")
+# palindromic_ta<-subset(harmonized,effect_allele.exposure %in% "T"&other_allele.exposure %in% "A")
+# palindromic_gc<-subset(harmonized,effect_allele.exposure %in% "G"&other_allele.exposure %in% "C")
+# palindromic_cg<-subset(harmonized,effect_allele.exposure %in% "C"&other_allele.exposure %in% "G")
+# dim(palindromic_at)
+# dim(palindromic_ta)
+# dim(palindromic_gc)
+# dim(palindromic_cg)
+```
+
+### Perform clumping
+*Also take note of the different clumping threshold. Vary the clumping threshold and see how that impacts the results.*
+```{r}
+Exp_Out_Harmonized_Clumped <- clump_data(harmonized,clump_kb = 500000,clump_r2 = 0.01,clump_p1 = 1,clump_p2 = 1, pop = "AFR")
+```
+
+### Perform MR analysis
+```{r}
+Exp_Out_Harmonized_Clumped2 <- clump_data(harmonized,clump_kb = 10000,clump_r2 = 0.1,clump_p1 = 1,clump_p2 = 1, pop = "AFR")
+```
+
+```{r}
+mr_results <- mr(Exp_Out_Harmonized_Clumped, method_list=c("mr_ivw","mr_egger_regression","mr_weighted_median", "mr_weighted_mode"))
+mr_results
+results <-cbind.data.frame(mr_results$outcome,mr_results$nsnp,mr_results$method,mr_results$b,mr_results$se,mr_results$pval)
+
+mr_results2 <- mr(Exp_Out_Harmonized_Clumped2, method_list=c("mr_ivw","mr_egger_regression","mr_weighted_median", "mr_weighted_mode"))
+mr_results2
+results2 <-cbind.data.frame(mr_results$outcome,mr_results$nsnp,mr_results$method,mr_results$b,mr_results$se,mr_results$pval)
+```
+
+```{r}
+write.csv(results,"dbp_kidney.csv")
+write.csv(results2,"dbp_kidney2.csv")
+```
+
+## Sensitivity analysis
+```{r}
+#heterogeneity
+het <- mr_heterogeneity(Exp_Out_Harmonized_Clumped)
+het
+#pleiotropy
+pleio <- mr_pleiotropy_test(Exp_Out_Harmonized_Clumped)
+pleio
+res_single <- mr_singlesnp(Exp_Out_Harmonized_Clumped)
+res_single
+
+#heterogeneity
+het2 <- mr_heterogeneity(Exp_Out_Harmonized_Clumped2)
+het2
+#pleiotropy
+pleio2 <- mr_pleiotropy_test(Exp_Out_Harmonized_Clumped2)
+pleio2
+res_single2 <- mr_singlesnp(Exp_Out_Harmonized_Clumped2)
+res_single2
+```
+## Generate Plots
+```{r, include= TRUE}
+png("dbp_kidney.png")
+  mr_scatter_plot(mr_results, Exp_Out_Harmonized_Clumped)
+dev.off()
+
+png("dbp_kidney2.png")
+  mr_scatter_plot(mr_results2, Exp_Out_Harmonized_Clumped2)
+dev.off()
+```
+
+```{r}
+png("dbp_kidney_forest.png")
+  mr_forest_plot(res_single)
+dev.off()
+
+png("dbp_kidney_forest2.png")
+  mr_forest_plot(res_single2)
+dev.off()
+```
+
+```{r}
+png("dbp_kidneyfunnel.png")
+  mr_funnel_plot(res_single)
+dev.off()
+
+png("dbp_kidneyfunnel2.png")
+  mr_funnel_plot(res_single2)
+dev.off()
+
+```
+```{r}
+res_loo <- mr_leaveoneout(Exp_Out_Harmonized_Clumped)
+png("dbp_kidney_loo.png")
+  mr_leaveoneout_plot(res_loo)
+dev.off()
+
+res_loo2 <- mr_leaveoneout(Exp_Out_Harmonized_Clumped2)
+png("dbp_kidney_loo2.png")
+  mr_leaveoneout_plot(res_loo2)
+dev.off()
+```
